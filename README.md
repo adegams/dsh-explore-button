@@ -16,6 +16,12 @@ Répond au besoin de beaucoup d'utilisateurs : **parcourir visuellement les doss
   - **Ouvre un fichier au clic** : affiche son contenu dans un viewer texte (fond blanc, texte sombre).
   - Détecte les fichiers **binaires** (message dédié).
   - Boutons d'action : **↩ Retour**, **📋 Copier le chemin**, **💬 Envoyer dans le chat**.
+- **Chemins de fichiers cliquables dans le chat DSH** : les références de fichiers
+  mentionnées dans les messages (ex. `AGENTS.md`, `database/seeders/CatalogueUpdate.php`)
+  sont repérées (soulignées en bleu) et s'ouvrent **directement dans le viewer** au clic.
+  - Détection par `MutationObserver` (fonctionne sur les nouveaux messages).
+  - Résolution depuis la racine projet `/var/www/sieasset4all` ; tout chemin hors `/var/www` est refusé.
+  - Approche non-intrusive : n'intercepte jamais les autres clics de la GUI.
 - **2 endpoints API** serveur (sans toucher au directory-picker DSH) :
   - `GET /api/fs/list?path=<dir>` → liste JSON (nom, type, taille, caché).
   - `GET /api/fs/read?path=<file>` → contenu du fichier.

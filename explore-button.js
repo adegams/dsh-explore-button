@@ -324,6 +324,18 @@ const BUTTON_CSS = `
   outline: none;
   tab-size: 2;
 }
+
+/* Chemins de fichiers cliquables dans les messages du chat DSH */
+.dsh-fs-link {
+  color: #1a73e8;
+  background: #eaf2fd;
+  border-radius: 3px;
+  padding: 0 3px;
+  text-decoration: underline dotted;
+}
+.dsh-fs-link:hover {
+  background: #d8e8fb;
+}
 /* Also force action-bar and meta colors so nothing is white-on-white in dark themes */
 .dsh-fs-file-actions button {
   color: #1e1e1e;
@@ -632,6 +644,103 @@ const BUTTON_JS = `
     toastEl.className = 'dsh-explore-toast show' + (isSuccess ? '' : ' error');
     setTimeout(function() { toastEl.classList.remove('show'); }, 3000);
   }
+
+  // ── Chemins cliquables dans les messages du chat DSH ───────────────────────
+  // But : rendre les chemins de fichiers mentionnés dans le chat ouvrables dans
+  // le viewer. APPROCHE NON-INTRUSIVE : on balise individuellement les <code>
+  // qui ressemblent à un chemin (data-dsh-open) et on n'écoute que ces balises.
+  // Aucun clic de la GUI DSH n'est jamais intercepté à l'aveugle.
+  var PROJECT_ROOT = '/var/www/sieasset4all';
+
+  // Extensions de fichiers couramment rencontrées dans un projet code —
+  // utilisées pour accepter les noms de fichiers "nus" (ex: AGENTS.md).
+  var FILE_EXTS = [
+    'md', 'php', 'js', 'ts', 'json', 'yml', 'yaml', 'css', 'scss', 'html',
+    'py', 'sql', 'sh', 'txt', 'xml', 'env', 'blade.php', 'vue', 'jsx', 'tsx',
+    'gitignore', 'dist', 'ini', 'cfg', 'log', 'lock', 'composer', 'patch'
+  ];
+
+  // Un texte ressemble-t-il à un chemin OU un nom de fichier ?
+  function isFilePathText(t) {
+    if (!t) return false;
+    t = t.trim();
+    if (t.indexOf('/var/www') === 0) return true;
+    // n'est pas une URL
+    if (t.indexOf('http://') === 0 || t.indexOf('https://') === 0) return false;
+    // nom de fichier : un mot avec un point et une extension reconnue, pas de slash
+    if (t.indexOf('/') === -1) {
+      var dot0 = t.lastIndexOf('.');
+      if (dot0 === -1 || dot0 === 0 || dot0 === t.length - 1) return false;
+      var ext0 = t.substring(dot0 + 1).toLowerCase();
+      // pas d'espace, pas de caractères étranges
+      if (/[^A-Za-z0-9_.-]/.test(t)) return false;
+      if (ext0 === 'blade.php') return true;
+      if (FILE_EXTS.indexOf(ext0) !== -1) return true;
+      return false;
+    }
+    // chemin avec / : possède une extension alphanumérique
+    var dot = t.lastIndexOf('.');
+    if (dot === -1 || dot === t.length - 1) return false;
+    var ext = t.substring(dot + 1);
+    if (ext.length > 10) return false;
+    return /^[A-Za-z0-9]+$/.test(ext);
+  }
+
+  // Resout un chemin (absolu ou relatif projet) en absolu sous /var/www
+  function projectPath(raw) {
+    var p = raw.trim();
+    var abs = (p.charAt(0) === '/') ? p : PROJECT_ROOT + '/' + p;
+    try {
+      abs = new URL('file://' + abs).pathname;
+    } catch (e) {}
+    return (abs.indexOf('/var/www') === 0) ? abs : null;
+  }
+
+  // Marquage : pour chaque <code> sous root dont le texte est un chemin fichier,
+  // on lui ajoute data-dsh-open et une classe. On ne modifie PAS le texte affiché.
+  function markFileLinks(root) {
+    var codes = root.querySelectorAll('code');
+    for (var i = 0; i < codes.length; i++) {
+      var el = codes[i];
+      if (el.getAttribute('data-dsh-open')) continue; // déjà marqué
+      var txt = el.textContent || '';
+      if (isFilePathText(txt)) {
+        el.setAttribute('data-dsh-open', txt);
+        el.classList.add('dsh-fs-link');
+        el.style.cursor = 'pointer';
+      }
+    }
+  }
+
+  // Délégation ciblée : ne réagit QUE si un élément data-dsh-open est cliqué.
+  // On n'intercepte rien d'autre. preventDefault seulement pour ouvrir un fichier.
+  document.addEventListener('click', function(e) {
+    var el = e.target;
+    while (el && el.getAttribute && !el.getAttribute('data-dsh-open')) el = el.parentNode;
+    if (!el || !el.getAttribute) return;
+    var raw = el.getAttribute('data-dsh-open');
+    var abs = projectPath(raw);
+    if (!abs) {
+      showToast('Chemin hors /var/www : ' + raw, false);
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (modal.classList.contains('show') === false) modal.classList.add('show');
+    openFile(abs);
+  });
+
+  // Observe l'arrivée de nouveaux messages de chat pour baliser leurs chemins
+  markFileLinks(document.body);
+  var linkObserver = new MutationObserver(function(muts) {
+    for (var i = 0; i < muts.length; i++) {
+      var nodes = muts[i].addedNodes;
+      for (var j = 0; j < nodes.length; j++) {
+        if (nodes[j].nodeType === 1) markFileLinks(nodes[j]);
+      }
+    }
+  });
+  linkObserver.observe(document.body, { childList: true, subtree: true });
 })();
 `;
 
