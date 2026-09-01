@@ -18,10 +18,14 @@
     "README.md"
   ],
   "license": "MIT",
-  "author": "",
+  "author": "adegams",
   "repository": {
     "type": "git",
-    "url": "https://github.com/<VOTRE-USER>/dsh-explore-button.git"
+    "url": "https://github.com/adegams/dsh-explore-button.git"
+  },
+  "homepage": "https://github.com/adegams/dsh-explore-button#readme",
+  "bugs": {
+    "url": "https://github.com/adegams/dsh-explore-button/issues"
   },
   "engines": {
     "node": ">=18"
