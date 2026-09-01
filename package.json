@@ -1,0 +1,30 @@
+{
+  "name": "dsh-explore-button",
+  "version": "1.0.0",
+  "description": "DSH (DeepSeek Harness) Web plugin: floating directory explorer bar with a modal file browser and file viewer.",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "file-explorer",
+    "directory-browser",
+    "file-viewer"
+  ],
+  "type": "module",
+  "main": "explore-button.js",
+  "files": [
+    "explore-button.js",
+    "install.sh",
+    "README.md"
+  ],
+  "license": "MIT",
+  "author": "",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/<VOTRE-USER>/dsh-explore-button.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
