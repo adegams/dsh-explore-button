@@ -94,6 +94,61 @@ async function handleReadFile(req, res) {
   }
 }
 
+/**
+ * Handle POST /api/fs/write
+ * Body JSON: { path: <abs-path>, content: <string> }
+ * Overwrites an existing regular file (utf8). Returns { ok, path, bytes }.
+ */
+async function handleWriteFile(req, res) {
+  if (req.method !== "POST") {
+    res.writeHead(405, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "Method Not Allowed — use POST" }));
+    return;
+  }
+  let body = "";
+  try {
+    for await (const chunk of req) body += chunk;
+  } catch (e) {
+    res.writeHead(400, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "Failed to read body: " + e.message }));
+    return;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(body || "{}");
+  } catch {
+    res.writeHead(400, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid JSON body" }));
+    return;
+  }
+  const { path, content } = payload;
+  if (typeof path !== "string" || !path || typeof content !== "string") {
+    res.writeHead(400, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "Body must be { path: string, content: string }" }));
+    return;
+  }
+  const fsPath = resolve(path);
+  try {
+    const { stat, writeFile } = await import("node:fs/promises");
+    const info = await stat(fsPath);
+    if (!info.isFile()) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Not a regular file: " + fsPath }));
+      return;
+    }
+    await writeFile(fsPath, content, "utf8");
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({
+      ok: true,
+      path: fsPath,
+      bytes: Buffer.byteLength(content, "utf8"),
+    }));
+  } catch (e) {
+    res.writeHead(500, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: e.message, code: e.code || "UNKNOWN" }));
+  }
+}
+
 // ── CSS for floating bar + modal file browser ────────────────────────────────
 
 const BUTTON_CSS = `
@@ -323,6 +378,36 @@ const BUTTON_CSS = `
   border: none;
   outline: none;
   tab-size: 2;
+}
+.dsh-fs-edit-area {
+  flex: 1;
+  width: 100%;
+  min-height: 1080px;
+  max-height: 90vh;
+  box-sizing: border-box;
+  font-family: "SF Mono", "JetBrains Mono", "Fira Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #1e1e1e;
+  background: #ffffff;
+  border: 1px solid #c0c4c8;
+  border-radius: 6px;
+  padding: 10px 12px;
+  resize: vertical;
+  white-space: pre;
+  tab-size: 2;
+  outline: none;
+}
+.dsh-fs-save-btn, .dsh-fs-cancel-edit-btn {
+  font-weight: 600;
+}
+.dsh-fs-save-btn {
+  background: #1a73e8 !important;
+  border-color: #1a73e8 !important;
+  color: #ffffff !important;
+}
+.dsh-fs-save-btn:hover {
+  background: #1558b0 !important;
 }
 
 /* Chemins de fichiers cliquables dans les messages du chat DSH */
@@ -572,11 +657,14 @@ const BUTTON_JS = `
       }
 
       var lineInfo = data.totalLines ? ' — ' + data.totalLines + ' lignes' + (data.truncated ? ' (tronqué)' : '') : '';
+      var editBtnHtml = isBinary ? '' :
+        '  <button class="dsh-fs-edit-btn" title="✏️ Modifier le fichier">✏️ Modifier</button>';
       modalBody.innerHTML =
         '<div class="dsh-fs-file-actions">' +
         '  <button class="dsh-fs-back-btn" title="↩ Retour au dossier">↩ Retour</button>' +
         '  <button class="dsh-fs-copy-btn" title="📋 Copier le chemin du fichier">📋 Copier le chemin</button>' +
         '  <button class="dsh-fs-open-btn" title="💬 Envoyer dans le chat">💬 Envoyer dans le chat</button>' +
+        editBtnHtml +
         '  <span class="dsh-fs-file-meta">' + (path.indexOf('/') >= 0 ? path.substring(path.lastIndexOf('/') + 1) : path) + lineInfo + '</span>' +
         '</div>' +
         contentDisplay;
@@ -590,6 +678,11 @@ const BUTTON_JS = `
         copyPath(path);
         showToast("Chemin envoyé — collez dans le chat pour lire le fichier", true);
       });
+      if (!isBinary) {
+        modalBody.querySelector('.dsh-fs-edit-btn').addEventListener('click', function() {
+          enableEditMode(path, data.content);
+        });
+      }
 
     } catch (err) {
       modalBody.innerHTML =
@@ -600,6 +693,43 @@ const BUTTON_JS = `
         '<div class="dsh-fs-error">Erreur : ' + err.message + '</div>';
       modalBody.querySelector('.dsh-fs-back-btn').addEventListener('click', backToDirectory);
     }
+  }
+
+  // Enter edit mode: swap the viewer for a textarea + save/cancel actions
+  function enableEditMode(path, content) {
+    modalBody.innerHTML =
+      '<div class="dsh-fs-file-actions">' +
+      '  <button class="dsh-fs-save-btn" title="💾 Enregistrer le fichier">💾 Enregistrer</button>' +
+      '  <button class="dsh-fs-cancel-edit-btn" title="↩ Annuler (sans enregistrer)">↩ Annuler</button>' +
+      '  <span class="dsh-fs-file-meta">✏️ ' + (path.indexOf('/') >= 0 ? path.substring(path.lastIndexOf('/') + 1) : path) + '</span>' +
+      '</div>' +
+      '<textarea class="dsh-fs-edit-area" spellcheck="false">' + escapeHtml(content) + '</textarea>';
+
+    modalBody.querySelector('.dsh-fs-cancel-edit-btn').addEventListener('click', function() {
+      openFile(path);
+    });
+    modalBody.querySelector('.dsh-fs-save-btn').addEventListener('click', async function() {
+      var btn = modalBody.querySelector('.dsh-fs-save-btn');
+      var area = modalBody.querySelector('.dsh-fs-edit-area');
+      btn.disabled = true;
+      btn.textContent = '💾 Enregistrement…';
+      try {
+        var resp = await fetch('/api/fs/write', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: path, content: area.value })
+        });
+        var data = await resp.json();
+        if (!resp.ok || data.error) throw new Error(data.error || 'Erreur ' + resp.status);
+        showToast('💾 Fichier enregistré : ' + data.bytes + ' octets', true);
+        openFile(path); // relit le fichier à jour
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = '💾 Enregistrer';
+        showToast('Erreur enregistrement : ' + err.message, false);
+      }
+    });
   }
 
   // Go back to directory listing
@@ -757,6 +887,11 @@ function apply(ctx) {
     kind: "exact",
     path: "/api/fs/read",
     handler: handleReadFile
+  });
+  ctx.webServer.register({
+    kind: "exact",
+    path: "/api/fs/write",
+    handler: handleWriteFile
   });
 
   // Inject CSS, HTML, JS into index.html on every render

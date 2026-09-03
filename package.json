@@ -1,7 +1,7 @@
 {
   "name": "dsh-explore-button",
-  "version": "1.1.0",
-  "description": "DSH (DeepSeek Harness) Web plugin: floating directory explorer bar with a modal file browser and clickable file-path links in the chat.",
+  "version": "1.2.0",
+  "description": "DSH (DeepSeek Harness) Web plugin: floating directory explorer bar with a modal file browser (view + edit + save) and clickable file-path links in the chat.",
   "keywords": [
     "deepseek-harness",
     "dsh",
@@ -15,10 +15,11 @@
   "files": [
     "explore-button.js",
     "install.sh",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "license": "MIT",
-  "author": "adegams",
+  "author": "adegams <adegams@gmail.com>",
   "repository": {
     "type": "git",
     "url": "https://github.com/adegams/dsh-explore-button.git"

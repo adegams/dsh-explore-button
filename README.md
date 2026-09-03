@@ -1,8 +1,13 @@
 # 🧭 dsh-explore-button
 
+[![Version](https://img.shields.io/badge/version-1.2.0-blue)](package.json)
+[![License](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-339933)](package.json)
+[![DSH](https://img.shields.io/badge/DSH-DeepSeek%20Harness-8b5cf6)]()
+
 Plugin **DSH (DeepSeek Harness)** — Barre flottante `Explorateur de dossiers` avec navigateur de fichiers en modal.
 
-Répond au besoin de beaucoup d'utilisateurs : **parcourir visuellement les dossiers et lire les fichiers directement depuis l'interface DSH Web**, sans passer par une commande shell.
+Répond au besoin de beaucoup d'utilisateurs : **parcourir visuellement les dossiers, lire ET modifier les fichiers directement depuis l'interface DSH Web**, sans passer par une commande shell.
 
 ---
 
@@ -14,7 +19,11 @@ Répond au besoin de beaucoup d'utilisateurs : **parcourir visuellement les doss
   - Lis et affiche l'arborescence d'un dossier (fichiers + sous-dossiers).
   - Navigation par **breadcrumb** (remonter dans les parents) et par clic sur un sous-dossier.
   - **Ouvre un fichier au clic** : affiche son contenu dans un viewer texte (fond blanc, texte sombre).
-  - Détecte les fichiers **binaires** (message dédié).
+- **✏️ Modification + 💾 enregistrement** (nouveau en v1.2.0) :
+  - Bouton **« ✏️ Modifier »** sur tout fichier texte → édition dans une grande zone de texte monospace.
+  - **« 💾 Enregistrer »** réécrit le fichier sur le disque ; le viewer se recharge automatiquement avec le contenu à jour (toast de confirmation avec le nombre d'octets).
+  - **« ↩ Annuler »** pour revenir au viewer sans écrire.
+  - Détecte les fichiers **binaires** (message dédié, aucune édition proposée).
   - Boutons d'action : **↩ Retour**, **📋 Copier le chemin**, **💬 Envoyer dans le chat**.
 - **Chemins de fichiers cliquables dans le chat DSH** : les références de fichiers
   mentionnées dans les messages (ex. `AGENTS.md`, `database/seeders/CatalogueUpdate.php`)
@@ -22,9 +31,13 @@ Répond au besoin de beaucoup d'utilisateurs : **parcourir visuellement les doss
   - Détection par `MutationObserver` (fonctionne sur les nouveaux messages).
   - Résolution depuis la racine projet `/var/www/sieasset4all` ; tout chemin hors `/var/www` est refusé.
   - Approche non-intrusive : n'intercepte jamais les autres clics de la GUI.
-- **2 endpoints API** serveur (sans toucher au directory-picker DSH) :
-  - `GET /api/fs/list?path=<dir>` → liste JSON (nom, type, taille, caché).
-  - `GET /api/fs/read?path=<file>` → contenu du fichier.
+- **3 endpoints API** serveur (sans toucher au directory-picker DSH) :
+
+| Méthode | Route | Description |
+|---|---|---|
+| `GET` | `/api/fs/list?path=<dir>` | Liste JSON (nom, type, taille, caché, tronqué à 1000 entrées) |
+| `GET` | `/api/fs/read?path=<file>` | Contenu du fichier en UTF-8 + nombre de lignes |
+| `POST` | `/api/fs/write` | Body `{ "path": "<file>", "content": "<texte>" }` → `{ ok, path, bytes }` |
 
 ---
 
@@ -34,7 +47,7 @@ Répond au besoin de beaucoup d'utilisateurs : **parcourir visuellement les doss
 
 ```bash
 # Depuis le dossier du plugin
-./install.sh            # installe dans le profil DSH "web"
+./install.sh               # installe dans le profil DSH "web"
 # PROFILE=mon-profil ./install.sh   # autre profil
 ```
 
@@ -43,6 +56,10 @@ Puis **redémarrez le serveur DSH** :
 ```bash
 pkill -f 'dsh web'  &&  dsh web
 ```
+
+> ⚠️ **Gotcha** : lancez `dsh` depuis un répertoire **sans `.env` projet** (ex. `cd ~`) —
+> `dsh` refuse de démarrer si le `.env` courant définit des variables réservées
+> comme `DEEPSEEK_BASE_URL`.
 
 ### Méthode manuelle
 
@@ -53,24 +70,33 @@ pkill -f 'dsh web'  &&  dsh web
 ```yaml
 - insert:
     - id: fs-browser
-      name: './plugins/explore-button.js'
+      name: './plugins/explore-button.js?ver=<timestamp>'
 ```
 
-> 💡 Le `?ver=<timestamp>` dans le nom force le re-import du module (utile en cas de cache HMR).
+> 💡 Le `?ver=<timestamp>` (ou `?v=<timestamp>`) dans le nom force le re-import
+> du module à chaque redémarrage — indispensable quand vous mettez à jour le
+> fichier du plugin (cache de module Node).
 
 ---
 
 ## ⚙️ Configuration des raccourcis
 
-Modifier le tableau `QUICK_PATHS` en haut de `explore-button.js` :
+Modifier le tableau `QUICK_PATHS` en haut de `explore-button.js` — les entrées par défaut :
 
 ```js
 const QUICK_PATHS = [
   { label: "🏠 /var/www",      path: "/var/www" },
   { label: "🔧 sieasset4all",  path: "/var/www/sieasset4all" },
+  { label: "🔐 apipki",        path: "/var/www/apipki" },
+  { label: "⚙️  core",         path: "/var/www/core" },
+  { label: "🌐 main",          path: "/var/www/main" },
+  { label: "🔔 notifications", path: "/var/www/notifications" },
+  { label: "📲 mobileedr",     path: "/var/www/mobileedr" },
   { label: "🔍 recherche",     path: "SEARCH" },
 ];
 ```
+
+La valeur spéciale `"SEARCH"` ouvre un raccourci de recherche libre.
 
 ---
 
@@ -80,7 +106,7 @@ const QUICK_PATHS = [
 dsh-explore-button/
 ├── explore-button.js     # le plugin (source ESM)
 ├── install.sh            # script d'installation
-├── package.json          # exports ESM
+├── package.json          # exports ESM + métadonnées
 └── README.md             # ce fichier
 ```
 
@@ -89,12 +115,47 @@ dsh-explore-button/
 ## 🛠️ Fonctionnement technique
 
 - Le plugin écoute l'événement `webserver/index-inject` pour injecter le **CSS**, le **HTML** (barre + modal) et le **JS** dans `index.html` à chaque rendu.
-- Il enregistre deux routes HTTP sur le serveur web DSH (`ctx.webServer.register`).
+- Il enregistre trois routes HTTP sur le serveur web DSH (`ctx.webServer.register`) : `/api/fs/list`, `/api/fs/read` et `/api/fs/write` (dispatcher par chemin, méthode gérée par le handler — `405` hors `POST`).
 - Aucune dépendance supplémentaire : utilise les modules Node natifs (`node:fs/promises`, `node:path`, `node:os`).
+- `POST /api/fs/write` n'écrit que sur des **fichiers existants** (jamais de création), en UTF-8.
 
 ---
 
-## ❓ Dépendances
+## 🔒 Sécurité — à lire avant d'activer l'édition
 
-- DSH Web profile (serve le GUI web sur un port).
-- Node.js natifs uniquement — **aucun `npm install` requis**.
+- `POST /api/fs/write` **écrase un fichier existant** sans sauvegarde : ce que vous
+  enregistrez remplace immédiatement le contenu sur le disque (journaux SVN/Git
+  disponibles pour revenir en arrière dans le cadre d'un dépôt).
+- L'endpoint respecte le même niveau de confiance que l'endpoint de lecture :
+  il agit avec les droits du processus DSH. **Ne l'exposez pas sur un serveur
+  multi-utilisateurs ou public** sans contrôle d'accès.
+- Les fichiers **binaires** ne sont jamais proposés à l'édition.
+- Pour verrouiller l'écriture sur une zone précise (ex. `/var/www` uniquement),
+  ajoutez un garde-fou dans `handleWriteFile` (racine `resolve(...)` → préfixe attendu).
+
+---
+
+## 📋 Changelog
+
+### v1.2.0 (2026-09-03)
+- ✏️ **Édition + enregistrement** de fichiers texte depuis le viewer (boutons Modifier / Enregistrer / Annuler).
+- Zone d'édition haute (min 1080 px) avec confirmation toast (octets écrits) et rechargement automatique.
+- Nouvel endpoint `POST /api/fs/write`.
+
+### v1.1.0
+- Barre flottante, navigateur de fichiers en modal, viewer lecture seule, endpoints `GET /api/fs/list` et `GET /api/fs/read`.
+- Chemins de fichiers cliquables dans le chat (MutationObserver).
+
+---
+
+## ❓ Dépendances / Compatibilité
+
+- **DSH Web profile** (le GUI web servi sur un port).
+- **Node.js ≥ 18** (modules natifs uniquement — **aucun `npm install` requis**).
+- Testé sur DSH serveur `dsh web` (profil `web`), Node 24.
+
+---
+
+## 📄 Licence
+
+MIT — voir le fichier `LICENSE` du dépôt. Utilisation, modification et redistribution libres (attribution requise).
