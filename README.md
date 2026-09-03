@@ -1,6 +1,6 @@
 # 🧭 dsh-explore-button
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue)](package.json)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue)](package.json)
 [![License](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-339933)](package.json)
 [![DSH](https://img.shields.io/badge/DSH-DeepSeek%20Harness-8b5cf6)]()
