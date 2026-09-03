@@ -30,6 +30,7 @@ Répond au besoin de beaucoup d'utilisateurs : **parcourir visuellement les doss
   sont repérées (soulignées en bleu) et s'ouvrent **directement dans le viewer** au clic.
   - Détection par `MutationObserver` (fonctionne sur les nouveaux messages).
   - Résolution depuis la racine projet `/var/www/sieasset4all` ; tout chemin hors `/var/www` est refusé.
+  - **Recherche auto dans les sous-dossiers** : si le fichier n'existe pas à la racine, le plugin le retrouve lui-même (ex. `session_memory.md` → `.agent/workflows/session_memory.md`) via `/api/fs/resolve` (v1.3.0).
   - Approche non-intrusive : n'intercepte jamais les autres clics de la GUI.
 - **3 endpoints API** serveur (sans toucher au directory-picker DSH) :
 
@@ -37,6 +38,7 @@ Répond au besoin de beaucoup d'utilisateurs : **parcourir visuellement les doss
 |---|---|---|
 | `GET` | `/api/fs/list?path=<dir>` | Liste JSON (nom, type, taille, caché, tronqué à 1000 entrées) |
 | `GET` | `/api/fs/read?path=<file>` | Contenu du fichier en UTF-8 + nombre de lignes |
+  | `GET` | `/api/fs/resolve?name=<basename>` | Recherche d'un fichier dans le projet (dossiers doc prioritaires, parcours borné) → `{ found, path, via }` |
 | `POST` | `/api/fs/write` | Body `{ "path": "<file>", "content": "<texte>" }` → `{ ok, path, bytes }` |
 
 ---
@@ -136,6 +138,9 @@ dsh-explore-button/
 ---
 
 ## 📋 Changelog
+
+### v1.3.0 (2026-09-03)
+- 🔎 **Résolution automatique des chemins de fichiers** : référence introuvable à la racine → recherche bornée dans le projet (dossiers doc prioritaires) via le nouvel endpoint `GET /api/fs/resolve` → toast « 📂 Résolu » + ouverture directe du bon fichier (ex. `session_memory.md` → `.agent/workflows/session_memory.md`).
 
 ### v1.2.0 (2026-09-03)
 - ✏️ **Édition + enregistrement** de fichiers texte depuis le viewer (boutons Modifier / Enregistrer / Annuler).

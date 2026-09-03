@@ -149,6 +149,54 @@ async function handleWriteFile(req, res) {
   }
 }
 
+/**
+ * Handle GET /api/fs/resolve?name=<basename>
+ * Searches the project root (and its doc/workflow subdirectories) for a file
+ * whose basename matches. Returns { found, path?, via? } — safe, bounded search.
+ */
+async function handleResolveFile(req, res) {
+  const url = new URL(req.url ?? "/", "http://x");
+  const name = (url.searchParams.get("name") || "").trim();
+  const ROOT = "/var/www/sieasset4all";
+  const json = (obj) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(obj));
+  };
+  if (!name || name === "." || name === ".." || name.includes("/")) {
+    json({ found: false, error: "name must be a bare filename" });
+    return;
+  }
+  try {
+    const { readdir, stat } = await import("node:fs/promises");
+    const { resolve: rp } = await import("node:path");
+    // 1. Dossiers "documentation" prioritaires + racine
+    const curated = [".", ".agent/workflows", ".agent", "documentation", "docstech", "scripts", "app", "database", "resources", "routes", "config", "public", "tests", "workflows"];
+    for (const dir of curated) {
+      const cand = rp(ROOT, dir, name);
+      try {
+        if ((await stat(cand)).isFile()) { json({ found: true, path: cand, via: dir }); return; }
+      } catch {}
+    }
+    // 2. Parcours borné de l'arbre (profondeur 4, dossiers lourds/cachés ignorés)
+    const SKIP = new Set(["node_modules", "vendor", ".git", ".svn", "storage", "branches", "frontend", "build", "dist", "cache", "plugins"]);
+    let hit = null;
+    async function walk(dir, depth) {
+      if (hit || depth > 4) return;
+      let entries;
+      try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (hit) return;
+        if (e.name === name && e.isFile()) { hit = rp(dir, e.name); return; }
+        if (e.isDirectory() && !SKIP.has(e.name) && !e.name.startsWith(".")) await walk(rp(dir, e.name), depth + 1);
+      }
+    }
+    await walk(ROOT, 0);
+    json(hit ? { found: true, path: hit, via: "tree" } : { found: false });
+  } catch (e) {
+    json({ found: false, error: e.message });
+  }
+}
+
 // ── CSS for floating bar + modal file browser ────────────────────────────────
 
 const BUTTON_CSS = `
@@ -622,7 +670,7 @@ const BUTTON_JS = `
   }
 
   // Open a file in the viewer (fetches content via /api/fs/read)
-  async function openFile(path) {
+  async function openFile(path, skipFallback) {
     currentDir = dirnameBrowser(path);
     modalBreadcrumb.style.display = 'none';
     modalPath.textContent = path;
@@ -685,6 +733,20 @@ const BUTTON_JS = `
       }
 
     } catch (err) {
+      // Fallback : fichier introuvable à la racine → recherche auto dans les sous-dossiers du projet
+      if (!skipFallback && path.indexOf(PROJECT_ROOT) === 0) {
+        var nm2 = (path.indexOf('/') >= 0 ? path.substring(path.lastIndexOf('/') + 1) : path);
+        var fresp;
+        try {
+          fresp = await fetch('/api/fs/resolve?name=' + encodeURIComponent(nm2), { credentials: 'include' });
+          var fdata = await fresp.json();
+          if (fdata && fdata.found) {
+            showToast('📂 Résolu : ' + fdata.path + (fdata.via ? ' (via ' + fdata.via + ')' : ''), true);
+            return openFile(fdata.path, true);
+          }
+        } catch (e2) {}
+        showToast('Fichier introuvable dans le projet : ' + nm2, false);
+      }
       modalBody.innerHTML =
         '<div class="dsh-fs-file-actions">' +
         '  <button class="dsh-fs-back-btn" title="↩ Retour">↩ Retour</button>' +
@@ -892,6 +954,11 @@ function apply(ctx) {
     kind: "exact",
     path: "/api/fs/write",
     handler: handleWriteFile
+  });
+  ctx.webServer.register({
+    kind: "exact",
+    path: "/api/fs/resolve",
+    handler: handleResolveFile
   });
 
   // Inject CSS, HTML, JS into index.html on every render
