@@ -197,6 +197,78 @@ async function handleResolveFile(req, res) {
   }
 }
 
+// ── Monitor : fichiers récemment modifiés ────────────────────────────────────
+// GET /api/fs/recent?root=<dir>&since=<epochMs>&limit=<n>&depth=<n>&hidden=1
+// Parcours borné de l'arbre (dossiers lourds/hidden ignorés, symlinks sautés),
+// résultats mémorisés 4 s par (racine, depth, hidden) pour absorber les polls
+// répétés du client. Tri mtime décroissant, plafonné à 1500 entrées.
+
+const RECENT_DEFAULT_ROOT = "/var/www/sieasset4all";
+const RECENT_SKIP_DIRS = new Set([
+  "node_modules", "vendor", ".git", ".svn", "branches", "storage",
+  "dist", "build", "cache", ".idea", ".vscode", "pki",
+]);
+const recentMemo = new Map(); // key -> { at, scannedAt, files }
+
+async function collectRecentFiles(root, depth, includeHidden) {
+  const out = [];
+  async function walk(dir, d) {
+    if (d > depth) return;
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      try {
+        if (e.name.startsWith(".") && !includeHidden) continue;
+        if (RECENT_SKIP_DIRS.has(e.name)) continue;
+        if (e.isSymbolicLink()) continue;
+        const full = resolve(dir, e.name);
+        if (e.isDirectory()) { await walk(full, d + 1); continue; }
+        if (!e.isFile()) continue;
+        const s = await stat(full);
+        out.push({ path: full, mtime: s.mtimeMs, size: s.size });
+      } catch {}
+    }
+  }
+  await walk(root, 0);
+  return out;
+}
+
+async function handleRecentFiles(req, res) {
+  const url = new URL(req.url ?? "/", "http://x");
+  const root = resolve(url.searchParams.get("root") || RECENT_DEFAULT_ROOT);
+  const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
+  const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 200));
+  const depth = Math.min(12, Math.max(1, Number(url.searchParams.get("depth")) || 7));
+  const includeHidden = url.searchParams.get("hidden") === "1";
+  const key = root + "|" + depth + "|" + (includeHidden ? 1 : 0);
+  const json = (obj) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(obj));
+  };
+  try {
+    let memo = recentMemo.get(key);
+    const now = Date.now();
+    if (!memo || now - memo.at > 4000) {
+      const files = await collectRecentFiles(root, depth, includeHidden);
+      files.sort((a, b) => b.mtime - a.mtime);
+      if (files.length > 1500) files.length = 1500;
+      memo = { at: now, scannedAt: now, files };
+      recentMemo.set(key, memo);
+    }
+    const filtered = since > 0 ? memo.files.filter((f) => f.mtime > since) : memo.files;
+    json({
+      root,
+      scannedAt: memo.scannedAt,
+      cached: now - memo.at < 4000,
+      count: filtered.length,
+      files: filtered.slice(0, limit).map((f) => ({ path: f.path, mtime: Math.round(f.mtime), size: f.size })),
+    });
+  } catch (e) {
+    res.writeHead(500, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: e.message, code: e.code || "UNKNOWN" }));
+  }
+}
+
 // ── CSS for floating bar + modal file browser ────────────────────────────────
 
 const BUTTON_CSS = `
@@ -506,6 +578,58 @@ const BUTTON_CSS = `
   background: rgba(239, 68, 68, 0.9);
   border-color: rgba(239, 68, 68, 0.5);
 }
+
+/* === Monitor : fichiers récemment modifiés === */
+.dsh-fs-recent-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, #e0e0e0);
+  font-size: 12px;
+}
+.dsh-fs-recent-toolbar button {
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid #c0c4c8;
+  background: #ffffff;
+  color: #1e1e1e;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dsh-fs-recent-toolbar button:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.08));
+}
+.dsh-fs-recent-toolbar .dsh-fs-range-btn.active {
+  background: #1a73e8;
+  border-color: #1a73e8;
+  color: #ffffff;
+  font-weight: 600;
+}
+.dsh-fs-recent-toolbar .dsh-fs-live-btn.live {
+  background: #e53935;
+  border-color: #e53935;
+  color: #ffffff;
+  font-weight: 600;
+}
+.dsh-fs-recent-count {
+  margin-left: auto;
+  color: #61666b;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.dsh-fs-rel-time {
+  margin-left: 8px;
+  flex-shrink: 0;
+  color: #61666b;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.dsh-fs-entry.file .dsh-fs-meta {
+  margin-left: auto;
+}
 `;
 
 // ── HTML ─────────────────────────────────────────────────────────────────────
@@ -519,6 +643,7 @@ function buildButtonBarHtml() {
   return `<div class="dsh-explore-bar" id="dsh-explore-bar">
   ${items}
   <span class="dsh-explore-separator"></span>
+  <span class="dsh-explore-item" id="dsh-explore-recent" title="Monitor — fichiers récemment modifiés">🕒 Monitor</span>
   <span class="dsh-explore-item" id="dsh-explore-toggle" title="Masquer la barre">&#9396;</span>
 </div>
 <div class="dsh-fs-modal-backdrop" id="dsh-fs-modal-backdrop">
@@ -565,6 +690,11 @@ const BUTTON_JS = `
       return;
     }
 
+    if (item.id === 'dsh-explore-recent') {
+      openRecentView();
+      return;
+    }
+
     var path = item.dataset.path;
     if (!path) return;
     openModal(path);
@@ -577,6 +707,7 @@ const BUTTON_JS = `
   });
   function closeModalHandler() {
     modal.classList.remove('show');
+    stopRecentLive();
   }
 
   // Close modal and reset file viewer state
@@ -794,8 +925,9 @@ const BUTTON_JS = `
     });
   }
 
-  // Go back to directory listing
+  // Go back to directory listing (or to the recent-files view when opened from it)
   async function backToDirectory() {
+    if (fromRecent) { openRecentView(); return; }
     if (currentDir) {
       modalBreadcrumb.style.display = '';
       modalBody.innerHTML = '<div class="dsh-fs-loading">Chargement…</div>';
@@ -933,6 +1065,164 @@ const BUTTON_JS = `
     }
   });
   linkObserver.observe(document.body, { childList: true, subtree: true });
+
+  // ── Monitor : fichiers récemment modifiés ──────────────────────────────
+  var RECENT_ROOT = PROJECT_ROOT;
+  var recentFiles = [];
+  var recentRangeHours = 24; // 1 | 24 | 168 | 0 (tout)
+  var recentLive = false;
+  var recentTimer = null;
+  var fromRecent = false;
+
+  function formatRelativeTime(ms) {
+    var diff = Date.now() - ms;
+    if (diff < 60000) return 'à l’instant';
+    if (diff < 3600000) return 'il y a ' + Math.floor(diff / 60000) + ' min';
+    if (diff < 86400000) return 'il y a ' + Math.floor(diff / 3600000) + ' h';
+    if (diff < 172800000) return 'hier';
+    var d = new Date(ms);
+    return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + ' ' +
+      ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+
+  function recentToolbarHtml() {
+    var ranges = [[1, '1 h'], [24, '24 h'], [168, '7 j'], [0, 'Tout']];
+    var range = '';
+    for (var i = 0; i < ranges.length; i++) {
+      var active = recentRangeHours === ranges[i][0] ? ' active' : '';
+      range += '<button class="dsh-fs-range-btn' + active + '" data-hours="' + ranges[i][0] + '">' + ranges[i][1] + '</button>';
+    }
+    return '<div class="dsh-fs-recent-toolbar">' +
+      '<button class="dsh-fs-refresh-btn" title="Actualiser">🔄</button>' +
+      range +
+      '<button class="dsh-fs-live-btn' + (recentLive ? ' live' : '') + '" title="Suivi auto toutes les 5 s — toast + liste">🔴 Suivi</button>' +
+      '<button class="dsh-fs-recent-back-btn" title="Revenir à l’explorateur">↩ Explorer</button>' +
+      '<span class="dsh-fs-recent-count"></span>' +
+      '</div>';
+  }
+
+  function bindRecentToolbar() {
+    modalBody.querySelector('.dsh-fs-refresh-btn').addEventListener('click', function() { loadRecent(true); });
+    modalBody.querySelector('.dsh-fs-recent-back-btn').addEventListener('click', function() {
+      fromRecent = false;
+      stopRecentLive();
+      modalBreadcrumb.style.display = '';
+      loadDirectory(RECENT_ROOT);
+    });
+    var rangeBtns = modalBody.querySelectorAll('.dsh-fs-range-btn');
+    for (var r = 0; r < rangeBtns.length; r++) (function(btn) {
+      btn.addEventListener('click', function() {
+        for (var i = 0; i < rangeBtns.length; i++) rangeBtns[i].classList.remove('active');
+        btn.classList.add('active');
+        recentRangeHours = Number(btn.dataset.hours);
+        renderRecentList();
+      });
+    })(rangeBtns[r]);
+    modalBody.querySelector('.dsh-fs-live-btn').addEventListener('click', function() {
+      if (recentLive) stopRecentLive(); else startRecentLive();
+    });
+  }
+
+  function fetchRecent(since, cb) {
+    fetch('/api/fs/recent?root=' + encodeURIComponent(RECENT_ROOT) +
+      '&since=' + (since || 0) + '&limit=300', { credentials: 'include' })
+      .then(function(resp) { return resp.json(); })
+      .then(function(data) {
+        if (data && data.error) throw new Error(data.error);
+        if (cb) cb((data && data.files) || []);
+      })
+      .catch(function(err) {
+        showToast('Erreur monitor : ' + err.message, false);
+        if (cb) cb([]);
+      });
+  }
+
+  function loadRecent(force) {
+    modalBody.innerHTML = recentToolbarHtml() +
+      '<div class="dsh-fs-loading">Analyse des fichiers modifiés…</div>';
+    bindRecentToolbar();
+    fetchRecent(0, function(list) {
+      recentFiles = list || [];
+      renderRecentList();
+    });
+  }
+
+  function renderRecentList() {
+    var now = Date.now();
+    var threshold = recentRangeHours > 0 ? now - recentRangeHours * 3600000 : 0;
+    var shown = [];
+    for (var i = 0; i < recentFiles.length; i++) {
+      if (recentFiles[i].mtime >= threshold) shown.push(recentFiles[i]);
+    }
+    var html = recentToolbarHtml();
+    if (shown.length === 0) {
+      html += '<div class="dsh-fs-loading">📭 Aucun fichier modifié' +
+        (recentRangeHours > 0 ? ' dans la période sélectionnée' : '') + '</div>';
+    } else {
+      html += shown.map(function(f) {
+        var rel = f.path.indexOf(RECENT_ROOT) === 0
+          ? f.path.substring(RECENT_ROOT.length + 1)
+          : f.path;
+        return '<div class="dsh-fs-entry file" data-path="' + f.path + '" title="' + f.path + '">' +
+          '<span class="dsh-fs-icon">📄</span>' +
+          '<span class="dsh-fs-name" title="' + rel + '">' + rel + '</span>' +
+          '<span class="dsh-fs-meta">' + (f.size != null ? formatSize(f.size) : '') + '</span>' +
+          '<span class="dsh-fs-rel-time">' + formatRelativeTime(f.mtime) + '</span>' +
+          '</div>';
+      }).join('');
+    }
+    modalBody.innerHTML = html;
+    bindRecentToolbar();
+    var countEl = modalBody.querySelector('.dsh-fs-recent-count');
+    if (countEl) {
+      countEl.textContent = shown.length + ' affiché(s) / ' + recentFiles.length +
+        (recentLive ? ' · 🔴 suivi actif' : '');
+    }
+    modalBody.querySelectorAll('.dsh-fs-entry.file').forEach(function(el) {
+      el.addEventListener('click', function() { openFile(this.dataset.path); });
+    });
+  }
+
+  function startRecentLive() {
+    if (recentTimer) return;
+    recentLive = true;
+    var btn = modalBody.querySelector('.dsh-fs-live-btn');
+    if (btn) btn.classList.add('live');
+    var sinceLast = Date.now();
+    recentTimer = setInterval(function() {
+      fetchRecent(sinceLast, function(list) {
+        if (!list || list.length === 0) { sinceLast = Date.now(); return; }
+        showToast('🔔 ' + list.length + ' fichier(s) modifié(s)', true);
+        var known = {};
+        for (var i = 0; i < recentFiles.length; i++) known[recentFiles[i].path] = 1;
+        var fresh = [];
+        for (var j = 0; j < list.length; j++) {
+          var p = list[j].path;
+          if (!known[p]) { fresh.push(list[j]); known[p] = 1; }
+        }
+        recentFiles = fresh.concat(recentFiles);
+        sinceLast = Date.now();
+        renderRecentList();
+      });
+    }, 5000);
+  }
+
+  function stopRecentLive() {
+    if (recentTimer) { clearInterval(recentTimer); recentTimer = null; }
+    recentLive = false;
+    var btn = document.querySelector('.dsh-fs-live-btn');
+    if (btn) btn.classList.remove('live');
+  }
+
+  function openRecentView() {
+    stopRecentLive();
+    fromRecent = true;
+    currentDir = null;
+    modal.classList.add('show');
+    modalBreadcrumb.style.display = 'none';
+    modalPath.textContent = '🕒 Monitor — ' + RECENT_ROOT;
+    loadRecent(true);
+  }
 })();
 `;
 
@@ -959,6 +1249,11 @@ function apply(ctx) {
     kind: "exact",
     path: "/api/fs/resolve",
     handler: handleResolveFile
+  });
+  ctx.webServer.register({
+    kind: "exact",
+    path: "/api/fs/recent",
+    handler: handleRecentFiles
   });
 
   // Inject CSS, HTML, JS into index.html on every render
