@@ -1,6 +1,6 @@
 # 🧭 dsh-explore-button
 
-[![Version](https://img.shields.io/badge/version-1.4.1-blue)](package.json)
+[![Version](https://img.shields.io/badge/version-1.5.0-blue)](package.json)
 [![License](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-339933)](package.json)
 [![DSH](https://img.shields.io/badge/DSH-DeepSeek%20Harness-8b5cf6)]()
@@ -32,6 +32,14 @@ Répond au besoin de beaucoup d'utilisateurs : **parcourir visuellement les doss
   - Résolution depuis la racine projet `/var/www/sieasset4all` ; tout chemin hors `/var/www` est refusé.
   - **Recherche auto dans les sous-dossiers** : si le fichier n'existe pas à la racine, le plugin le retrouve lui-même (ex. `session_memory.md` → `.agent/workflows/session_memory.md`) via `/api/fs/resolve` (v1.3.0).
   - Approche non-intrusive : n'intercepte jamais les autres clics de la GUI.
+- **✓ Tâches (task edit)** (nouveau en v1.5.0) :
+  - Item **« ✓ Tâches »** dans la barre flottante → modal d'édition du fichier `TODO.md` du projet.
+  - **➕ Ajouter** une tâche (input + bouton ou touche Entrée).
+  - **☑️ Barrer une tâche réalisée** (clic sur la case : `- [x]` → texte barré) ou la **reprendre**.
+  - **✕ Supprimer** une tâche.
+  - Persistance dans un **fichier** `TODO.md` au format markdown checkbox (`- [ ]` / `- [x]`) — lisible et modifiable aussi dans le viewer ; bouton **« 📂 Ouvrir le fichier »** pour le voir/éditer manuellement.
+  - Compteur « N tâche(s) — X à faire » ; toasts de confirmation à chaque action.
+  - 2 nouveaux endpoints : `GET /api/tasks/read` (liste) et `POST /api/tasks/save` (réécriture, crée le fichier s'il n'existe pas).
 - **🕒 Monitor de fichiers modifiés** (nouveau en v1.4.0) :
   - Item **« 🕒 Monitor »** dans la barre flottante → modal listant les fichiers
     modifiés du projet (`/var/www/sieasset4all`), triés du plus récent au plus ancien,
@@ -52,6 +60,8 @@ Répond au besoin de beaucoup d'utilisateurs : **parcourir visuellement les doss
   | `GET` | `/api/fs/resolve?name=<basename>` | Recherche d'un fichier dans le projet (dossiers doc prioritaires, parcours borné) → `{ found, path, via }` |
 | `GET` | `/api/fs/recent?root=<dir>&since=<ms>&limit=<n>` | Fichiers modifiés (parcours borné, mémo 4 s) → `{ root, scannedAt, count, files: [{ path, mtime, size }] }` |
 | `POST` | `/api/fs/write` | Body `{ "path": "<file>", "content": "<texte>" }` → `{ ok, path, bytes }` |
+| `GET` | `/api/tasks/read` | Tâches TODO → `{ path, content, exists }` (markdown checkbox) |
+| `POST` | `/api/tasks/save` | Body `{ "content": "<liste>" }` → réécrit `TODO.md` (créé si absent) → `{ ok, path, bytes }` |
 
 ---
 

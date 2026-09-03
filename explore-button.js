@@ -149,6 +149,73 @@ async function handleWriteFile(req, res) {
   }
 }
 
+// ── Tâches TODO (task edit) ────────────────────────────────────────────────
+// Fichier des tâches partagé (markdown "checkbox"): lignes `- [ ] texte` (en
+// cours) / `- [x] texte` (réalisée). Le client fait le CRUD sur ce fichier.
+const TASK_FILE = "/var/www/sieasset4all/TODO.md";
+
+/**
+ * Handle GET /api/tasks/read
+ * Returns { path, content, exists } — content "" si le fichier n'existe pas
+ * encore (le client affiche alors une liste vide prête à recevoir des tâches).
+ */
+async function handleTasksRead(req, res) {
+  const json = (code, obj) => {
+    res.writeHead(code, { "content-type": "application/json" });
+    res.end(JSON.stringify(obj));
+  };
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const content = await readFile(TASK_FILE, "utf8");
+    json(200, { path: TASK_FILE, content, exists: true });
+  } catch (e) {
+    if (e.code === "ENOENT") json(200, { path: TASK_FILE, content: "", exists: false });
+    else json(500, { error: e.message });
+  }
+}
+
+/**
+ * Handle POST /api/tasks/save
+ * Body JSON { content } — réécrit le fichier TODO (créé s'il n'existe pas).
+ * Chaque action du client (ajouter / barrer / supprimer) ré-envoie la liste.
+ */
+async function handleTasksSave(req, res) {
+  const json = (code, obj) => {
+    res.writeHead(code, { "content-type": "application/json" });
+    res.end(JSON.stringify(obj));
+  };
+  if (req.method !== "POST") {
+    json(405, { error: "Method Not Allowed — use POST" });
+    return;
+  }
+  let body = "";
+  try {
+    for await (const chunk of req) body += chunk;
+  } catch (e) {
+    json(400, { error: "Failed to read body: " + e.message });
+    return;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(body || "{}");
+  } catch {
+    json(400, { error: "Invalid JSON body" });
+    return;
+  }
+  const { content } = payload;
+  if (typeof content !== "string") {
+    json(400, { error: "Body must be { content: string }" });
+    return;
+  }
+  try {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(TASK_FILE, content, "utf8");
+    json(200, { ok: true, path: TASK_FILE, bytes: Buffer.byteLength(content, "utf8") });
+  } catch (e) {
+    json(500, { error: e.message });
+  }
+}
+
 /**
  * Handle GET /api/fs/resolve?name=<basename>
  * Searches the project root (and its doc/workflow subdirectories) for a file
@@ -630,6 +697,23 @@ const BUTTON_CSS = `
 .dsh-fs-entry.file .dsh-fs-meta {
   margin-left: auto;
 }
+.dsh-tasks-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.dsh-tasks-addrow{display:flex;gap:8px;flex:1 1 100%;margin-bottom:6px}
+.dsh-tasks-addrow input{flex:1;padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;background:#fff;color:#1e1e1e}
+.dsh-tasks-addrow button{padding:7px 14px;border:none;border-radius:6px;cursor:pointer;background:#28a745;color:#fff;font-weight:600}
+.dsh-tasks-addrow button:hover{background:#218838}
+.dsh-tasks-list{max-height:52vh;overflow-y:auto}
+.dsh-task-item{display:flex;align-items:center;gap:9px;padding:7px 8px;border-bottom:1px solid #eee;font-size:13.5px}
+.dsh-task-item:hover{background:#f6f8fa}
+.dsh-task-cb{width:17px;height:17px;cursor:pointer;accent-color:#28a745;flex:none}
+.dsh-task-text{flex:1;word-break:break-word}
+.dsh-task-item.done .dsh-task-text{text-decoration:line-through;opacity:.55}
+.dsh-task-del{border:none;background:transparent;color:#dc3545;cursor:pointer;font-size:15px;line-height:1;padding:2px 6px;border-radius:4px}
+.dsh-task-del:hover{background:#fdecea}
+.dsh-tasks-empty{color:#888;font-style:italic;padding:14px 8px;text-align:center}
+.dsh-tasks-count{color:#666;font-size:12px;margin-left:auto}
+.dsh-tasks-file-btn{border:1px solid #ccc;background:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;color:#1e1e1e}
+.dsh-tasks-file-btn:hover{background:#f0f0f0;color:#1e1e1e}
 `;
 
 // ── HTML ─────────────────────────────────────────────────────────────────────
@@ -643,6 +727,7 @@ function buildButtonBarHtml() {
   return `<div class="dsh-explore-bar" id="dsh-explore-bar">
   ${items}
   <span class="dsh-explore-separator"></span>
+  <span class="dsh-explore-item" id="dsh-explore-tasks" title="Tâches — TODO.md (ajouter / barrer / supprimer)">✓ Tâches</span>
   <span class="dsh-explore-item" id="dsh-explore-recent" title="Monitor — fichiers récemment modifiés">🕒 Monitor</span>
   <span class="dsh-explore-item" id="dsh-explore-toggle" title="Masquer la barre">&#9396;</span>
 </div>
@@ -692,6 +777,11 @@ const BUTTON_JS = `
 
     if (item.id === 'dsh-explore-recent') {
       openRecentView();
+      return;
+    }
+
+    if (item.id === 'dsh-explore-tasks') {
+      openTasksView();
       return;
     }
 
@@ -1223,6 +1313,138 @@ const BUTTON_JS = `
     modalPath.textContent = '🕒 Monitor — ' + RECENT_ROOT;
     loadRecent(true);
   }
+
+  // ── Tâches TODO (task edit) — TODO.md du projet ──────────────────────────
+  var TASK_FILE_PATH = PROJECT_ROOT + '/TODO.md';
+  var tasks = [];
+
+  function escHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function parseTaskLines(content) {
+    var list = [];
+    if (content) {
+      content.split(/\\r?\\n/).forEach(function(line) {
+        var m = line.match(/^\\-\\s*\\[( |x|X)\\]\\s*(.*)$/);
+        if (m) list.push({ done: m[1].toLowerCase() === 'x', text: m[2] });
+      });
+    }
+    return list;
+  }
+
+  function tasksToFileContent() {
+    var out = '';
+    for (var i = 0; i < tasks.length; i++) {
+      out += '- [' + (tasks[i].done ? 'x' : ' ') + '] ' + tasks[i].text + '\\n';
+    }
+    return out;
+  }
+
+  function saveTasks() {
+    return fetch('/api/tasks/save', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: tasksToFileContent() })
+    }).then(function(resp) { return resp.json(); });
+  }
+
+  function renderTasks() {
+    var html = '';
+    if (!tasks.length) {
+      html = '<div class="dsh-tasks-empty">Aucune tâche — ajoutez-en une ci-dessus 👆</div>';
+    } else {
+      for (var i = 0; i < tasks.length; i++) {
+        var t = tasks[i];
+        html += '<div class="dsh-task-item' + (t.done ? ' done' : '') + '" data-idx="' + i + '">' +
+          '<input type="checkbox" class="dsh-task-cb" data-idx="' + i + '"' + (t.done ? ' checked' : '') + ' title="Basculer réalisée / en cours">' +
+          '<span class="dsh-task-text">' + escHtml(t.text) + '</span>' +
+          '<button class="dsh-task-del" data-idx="' + i + '" title="Supprimer la tâche">✕</button>' +
+          '</div>';
+      }
+    }
+    var inProgress = tasks.filter(function(t) { return !t.done; }).length;
+    modalBody.innerHTML =
+      '<div class="dsh-tasks-toolbar">' +
+        '<div class="dsh-tasks-addrow">' +
+          '<input type="text" id="dsh-task-input" placeholder="➕ Nouvelle tâche… (Entrée pour ajouter)" maxlength="200">' +
+          '<button id="dsh-task-add" type="button">+ Ajouter</button>' +
+        '</div>' +
+        '<button class="dsh-tasks-file-btn" id="dsh-task-open" title="Ouvrir ' + TASK_FILE_PATH + ' dans le viewer">📂 Ouvrir le fichier</button>' +
+        '<button class="dsh-tasks-file-btn" id="dsh-task-back" title="Revenir à l’explorateur">↩ Explorer</button>' +
+        '<span class="dsh-tasks-count">' + tasks.length + ' tâche(s) — ' + inProgress + ' à faire</span>' +
+      '</div>' +
+      '<div class="dsh-tasks-list">' + html + '</div>';
+
+    var input = document.getElementById('dsh-task-input');
+    function addTask() {
+      var text = input.value.trim();
+      if (!text) return;
+      tasks.push({ done: false, text: text });
+      input.value = '';
+      saveTasks().then(function(res) {
+        if (res && res.ok) { showToast('✓ Tâche ajoutée — ' + TASK_FILE_PATH, true); renderTasks(); }
+        else showToast('Erreur enregistrement : ' + ((res && res.error) || 'inconnue'), false);
+      }).catch(function(err) { showToast('Erreur enregistrement : ' + err.message, false); });
+    }
+    document.getElementById('dsh-task-add').addEventListener('click', addTask);
+    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') addTask(); });
+
+    document.getElementById('dsh-task-open').addEventListener('click', function() {
+      openFile(TASK_FILE_PATH, true);
+    });
+    document.getElementById('dsh-task-back').addEventListener('click', function() {
+      fromRecent = false;
+      modalBreadcrumb.style.display = '';
+      loadDirectory(RECENT_ROOT);
+    });
+
+    modalBody.querySelectorAll('.dsh-task-cb').forEach(function(cb) {
+      cb.addEventListener('change', function() {
+        var idx = Number(cb.dataset.idx);
+        tasks[idx].done = cb.checked;
+        saveTasks().then(function(res) {
+          if (res && res.ok) showToast(tasks[idx].done ? '✓ Tâche réalisée' : '↩ Tâche reprise', true);
+          else showToast('Erreur enregistrement', false);
+          renderTasks();
+        }).catch(function(err) { showToast('Erreur enregistrement : ' + err.message, false); });
+      });
+    });
+    modalBody.querySelectorAll('.dsh-task-del').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var idx = Number(btn.dataset.idx);
+        var removed = tasks.splice(idx, 1)[0];
+        saveTasks().then(function(res) {
+          if (res && res.ok) showToast('🗑 Tâche supprimée : ' + escHtml(removed.text), true);
+          else showToast('Erreur enregistrement', false);
+          renderTasks();
+        }).catch(function(err) { showToast('Erreur enregistrement : ' + err.message, false); });
+      });
+    });
+  }
+
+  function loadTasks() {
+    modalBody.innerHTML = '<div class="dsh-fs-loading">Chargement des tâches…</div>';
+    fetch('/api/tasks/read', { credentials: 'include' })
+      .then(function(resp) { return resp.json(); })
+      .then(function(data) {
+        if (data && data.error) throw new Error(data.error);
+        tasks = parseTaskLines((data && data.content) || '');
+        renderTasks();
+      })
+      .catch(function(err) { showToast('Erreur tâches : ' + err.message, false); });
+  }
+
+  function openTasksView() {
+    stopRecentLive();
+    fromRecent = true;
+    currentDir = null;
+    modal.classList.add('show');
+    modalBreadcrumb.style.display = 'none';
+    modalPath.textContent = '✓ Tâches — ' + TASK_FILE_PATH;
+    loadTasks();
+  }
 })();
 `;
 
@@ -1254,6 +1476,16 @@ function apply(ctx) {
     kind: "exact",
     path: "/api/fs/recent",
     handler: handleRecentFiles
+  });
+  ctx.webServer.register({
+    kind: "exact",
+    path: "/api/tasks/read",
+    handler: handleTasksRead
+  });
+  ctx.webServer.register({
+    kind: "exact",
+    path: "/api/tasks/save",
+    handler: handleTasksSave
   });
 
   // Inject CSS, HTML, JS into index.html on every render

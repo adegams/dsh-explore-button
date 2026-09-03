@@ -1,6 +1,6 @@
 {
   "name": "dsh-explore-button",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "DSH (DeepSeek Harness) Web plugin: floating directory explorer bar with a modal file browser (view + edit + save) and clickable file-path links in the chat.",
   "keywords": [
     "deepseek-harness",
