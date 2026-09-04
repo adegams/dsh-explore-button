@@ -24,8 +24,12 @@ PLUGINS_DIR="$PROFILE_DIR/plugins"
 PLUGIN_SRC="$(cd "$(dirname "$0")" && pwd)/explore-button.js"
 
 # Entry id / module name used in cordis.patch.yml
+# NOTE: pas de suffixe "?ver=" — depuis @deepseek-ai/dsh 0.1.x le loader Cordis
+# URL-encode le query string ("explore-button.js%3Fver=…") et le module devient
+# introuvable (ERR_MODULE_NOT_FOUND au boot). Un simple redémarrage du serveur
+# re-importe de toute façon le module à jour.
 ENTRY_ID="fs-browser"
-MODULE_NAME="./plugins/explore-button.js?ver=$(date +%s)"
+MODULE_NAME="./plugins/explore-button.js"
 
 if [ ! -f "$PLUGIN_SRC" ]; then
   echo "ERROR: plugin file not found: $PLUGIN_SRC" >&2

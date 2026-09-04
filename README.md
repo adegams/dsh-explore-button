@@ -1,6 +1,6 @@
 # 🧭 dsh-explore-button
 
-[![Version](https://img.shields.io/badge/version-1.5.0-blue)](package.json)
+[![Version](https://img.shields.io/badge/version-1.6.0-blue)](package.json)
 [![License](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-339933)](package.json)
 [![DSH](https://img.shields.io/badge/DSH-DeepSeek%20Harness-8b5cf6)]()
@@ -94,12 +94,15 @@ pkill -f 'dsh web'  &&  dsh web
 ```yaml
 - insert:
     - id: fs-browser
-      name: './plugins/explore-button.js?ver=<timestamp>'
+      name: './plugins/explore-button.js'
 ```
 
-> 💡 Le `?ver=<timestamp>` (ou `?v=<timestamp>`) dans le nom force le re-import
-> du module à chaque redémarrage — indispensable quand vous mettez à jour le
-> fichier du plugin (cache de module Node).
+> ⚠️ **Ne pas ajouter de `?ver=` / `?v=` dans le nom** : depuis
+> `@deepseek-ai/dsh` 0.1.x, le loader Cordis URL-encode le query string
+> (`explore-button.js%3Fver=…`) et tente d'importer un fichier inexistant
+> (`ERR_MODULE_NOT_FOUND` au boot). Le module est de toute façon re-importé à
+> chaque démarrage du serveur : après une mise à jour du fichier, un simple
+> redémarrage de `dsh web` suffit.
 
 ---
 
